@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="tabs">
+  <input type="radio" id="tab-images" name="tabs" checked>
+  <label for="tab-images">Uploaded Images</label>
+  <input type="radio" id="tab-violations" name="tabs">
+  <label for="tab-violations">Violations</label>
+
+  <section id="images">
+    <h2>Images</h2>
+    <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="card">
+      <div class="row">
+        <label>Upload image</label>
+        <input type="file" name="image" accept="image/*" required>
+      </div>
+      <div class="row">
+        <label>Orientation</label>
+        <select name="orientation">
+          <option value="landscape">Landscape (1600×1200)</option>
+          <option value="portrait" selected>Portrait (1200×1600)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Resize method</label>
+        <div class="inline">
+          <label><input type="radio" name="method" value="crop" checked> Crop (short side→1200; center crop long→1600)</label>
+          <label><input type="radio" name="method" value="nocrop"> No crop (letterbox/pillarbox)</label>
+        </div>
+      </div>
+      <div class="row">
+        <label>Quantize to 6‑color palette</label>
+        <label class="inline"><input type="checkbox" name="quantize"> Enable</label>
+        <label class="inline"><input type="checkbox" name="dither" checked> Floyd‑Steinberg dither</label>
+      </div>
+      <div class="actions">
+        <button type="submit">Upload & Preview</button>
+      </div>
+    </form>
+
+    <h3>Library</h3>
+    {% if images %}
+    <div class="grid">
+      {% for im in images %}
+        <div class="thumb card">
+          <img src="{{ im.thumb_url }}" alt="{{ im.name }}">
+          <div class="meta">{{ im.name }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <p>No uploads yet.</p>
+    {% endif %}
+  </section>
+
+  <section id="violations">
+    <h2>Violations</h2>
+    <div class="grid-2">
+      <form action="{{ url_for('violations_report') }}" method="post" class="card">
+        <div class="row">
+          <label>Date of violation</label>
+          <input type="date" name="vdate" required>
+        </div>
+        <div class="row">
+          <label>Incident number</label>
+          <input type="text" name="incident" placeholder="e.g., 595" required>
+        </div>
+        <div class="row">
+          <label>Type</label>
+          <div class="inline">
+            <label><input type="radio" name="vtype" value="Change" checked> Change</label>
+            <label><input type="radio" name="vtype" value="Deploy"> Deploy</label>
+            <label><input type="radio" name="vtype" value="Missed"> Missed</label>
+          </div>
+        </div>
+        <div class="row">
+          <label><input type="checkbox" name="push_display"> Push to display now</label>
+        </div>
+        <div class="actions">
+          <button type="submit">Save & Update OSHA image</button>
+        </div>
+      </form>
+
+      <div class="card preview">
+        <div class="row">
+          <label>Current OSHA image</label>
+        </div>
+        <img src="{{ osha_url }}" alt="OSHA preview">
+        <form action="{{ url_for('violations_push') }}" method="post" class="actions">
+          <button type="submit">Send to Display</button>
+        </form>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

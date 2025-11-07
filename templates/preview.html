@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Preview</h2>
+    <img src="{{ img_url }}" alt="preview">
+    <form action="{{ url_for('send', filename=filename) }}" method="post" class="actions">
+      <label>Orientation</label>
+      <select name="orientation">
+        <option value="landscape">Landscape (1600×1200)</option>
+        <option value="portrait" selected>Portrait (1200×1600)</option>
+      </select>
+      <button type="submit">Send to Display</button>
+    </form>
+    <p><a href="{{ img_url }}" download>Download processed image</a></p>
+    <p><a href="{{ url_for('index') }}#images">Back</a></p>
+  </div>
+{% endblock %}
