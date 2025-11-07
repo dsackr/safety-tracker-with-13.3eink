@@ -172,7 +172,11 @@ def render_osha_sign(state, out_path):
     f_medium = _load_font(DEFAULT_FONT, 90)
     if state["days_since"] is not None:
         txt = str(state["days_since"])
-        w,h = draw.textsize(txt, font=f_days)
+        if hasattr(draw, "textbbox"):
+            bbox = draw.textbbox((0, 0), txt, font=f_days)
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        else:
+            w, h = draw.textsize(txt, font=f_days)
         draw.text(((W-w)//2, 460), txt, font=f_days, fill=(0,0,0))
     prior = "—" if state["prior_count"] is None else str(state["prior_count"])
     draw.text((70, 1220), "PRIOR COUNT:", font=f_medium, fill=(255,255,255))
