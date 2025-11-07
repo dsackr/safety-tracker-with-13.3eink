@@ -208,18 +208,24 @@ def build_and_get_osha_preview():
     return out_path
 
 def send_to_display(image_path, orientation="portrait"):
-    if DISPLAY_SCRIPT and Path(DISPLAY_SCRIPT).exists():
+    try:
+        from PIL import Image
+        # import your driver
+        from epd13in3E import EPD  # adjust name if file is different
+
+        img = Image.open(image_path).convert("RGB")
+
+        epd = EPD()
+        epd.Init()
         try:
-            import subprocess
-            cmd = ["python3", DISPLAY_SCRIPT, str(image_path), orientation]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            ok = proc.returncode == 0
-            msg = proc.stdout if ok else (proc.stderr or "Display script failed")
-            return ok, msg
-        except Exception as e:
-            return False, f"Error calling display script: {e}"
-    else:
-        return True, "Simulated push to display."
+            buf = epd.getbuffer(img)   # your driver builds the 4-bit packed buffer
+            epd.display(buf)
+        finally:
+            epd.sleep()
+
+        return True, "Panel updated."
+    except Exception as e:
+        return False, f"EPD error: {e}"
 
 sched = None
 def _schedule_daily_push():
