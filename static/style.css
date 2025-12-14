@@ -9,15 +9,18 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans"; }
-header { padding: 16px 20px; border-bottom: 1px solid #1c2740; }
+header { padding: 16px 20px; border-bottom: 1px solid #1c2740; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
+nav { display: flex; gap: 12px; }
+nav a { color: var(--fg); text-decoration: none; padding: 6px 10px; border-radius: 8px; border: 1px solid transparent; }
+nav a:hover { border-color: #1c2740; background: #0d1730; }
 h2 { margin: 0 0 12px; font-size: 18px; }
 main { padding: 20px; }
 .card { background: var(--card); border: 1px solid #1c2740; border-radius: 14px; padding: 16px; margin-bottom: 16px; }
 .row { margin-bottom: 12px; }
 .row label { display: block; font-weight: 600; margin-bottom: 6px; color: var(--muted); }
 .inline { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-input[type="text"], input[type="date"], select, input[type="file"] {
+input[type="text"], input[type="date"], input[type="password"], select, input[type="file"] {
   width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #25304a; background: #0c1424; color: var(--fg);
 }
 .actions { margin-top: 10px; }

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # (same app as previously generated) — see prior message for full comments
+import json
 import os
-import io
 import sqlite3
 import time
 from datetime import datetime, date
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
+from zoneinfo import ZoneInfo
 
+import requests
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -26,6 +28,10 @@ OSHA_DIR = STATIC / "osha"
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "violations.db"
 BACKGROUND_IMAGE = STATIC / "background.png"
+CONFIG_PATH = DATA_DIR / "config.json"
+INCIDENTS_JSON = DATA_DIR / "incidents.json"
+OTHERS_JSON = DATA_DIR / "others.json"
+PILLAR_KEY_PATH = DATA_DIR / "product_pillar_key.json"
 
 LANDSCAPE_SIZE = (1600, 1200)
 PORTRAIT_SIZE  = (1200, 1600)
@@ -56,6 +62,30 @@ def db_init():
         """)
         con.commit()
 
+def load_config() -> Dict[str, Any]:
+    if CONFIG_PATH.exists():
+        try:
+            return json.loads(CONFIG_PATH.read_text())
+        except Exception:
+            return {}
+    return {}
+
+def save_config(cfg: Dict[str, Any]):
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+
+def get_api_key() -> str:
+    cfg = load_config()
+    return cfg.get("incident_api_key") or os.environ.get("INCIDENT_API_KEY", "")
+
+def load_product_pillar_key() -> Dict[str, str]:
+    if PILLAR_KEY_PATH.exists():
+        try:
+            return json.loads(PILLAR_KEY_PATH.read_text())
+        except Exception:
+            return {}
+    return {}
+
 def db_add_violation(vdate: str, incident: str, vtype: str):
     with sqlite3.connect(DB_PATH) as con:
         con.execute("INSERT INTO violations (vdate, incident, vtype) VALUES (?,?,?)",
@@ -78,6 +108,172 @@ def build_palette_img(colors):
     return pal_img
 
 PALETTE_IMG = build_palette_img(EPD_6C_PALETTE)
+
+def parse_timestamp(ts: str) -> datetime:
+    if not ts:
+        return None
+    try:
+        # incident.io returns ISO strings with Z suffix
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def ny_time(dt: datetime) -> datetime:
+    if dt is None:
+        return None
+    try:
+        return dt.astimezone(ZoneInfo("America/New_York"))
+    except Exception:
+        return dt
+
+def pick_incident_time(incident: Dict[str, Any]) -> datetime:
+    ts = None
+    timestamps = incident.get("timestamps") or {}
+    ts = timestamps.get("reported_at") or incident.get("reported_at")
+    if not ts:
+        ts = timestamps.get("created_at") or incident.get("created_at")
+    dt = parse_timestamp(ts)
+    return ny_time(dt) if dt else None
+
+def rca_classification_from_custom_fields(incident: Dict[str, Any]) -> str:
+    entries = incident.get("custom_field_entries") or incident.get("custom_fields") or []
+    for entry in entries:
+        name = (entry.get("name") or entry.get("custom_field", {}).get("name") or "").lower()
+        cid = entry.get("custom_field_id") or entry.get("id") or ""
+        if name == "rca classification" or cid == "01JZ0PNKHCB3M6NX0AHPABS59D":
+            for key in ("value", "name", "value_text"):
+                if entry.get(key):
+                    return str(entry.get(key))
+            value_option = entry.get("value_option") or {}
+            for key in ("value", "name"):
+                if value_option.get(key):
+                    return str(value_option.get(key))
+    return "Not Classified"
+
+def extract_catalog_values(entries: list, field_name: str) -> List[str]:
+    values = []
+    for entry in entries:
+        name = (entry.get("name") or entry.get("custom_field", {}).get("name") or "").lower()
+        if name != field_name.lower():
+            continue
+        for key in ("values", "value_options", "value_option"):
+            if entry.get(key):
+                raw = entry.get(key)
+                if isinstance(raw, list):
+                    for item in raw:
+                        val = item.get("value") or item.get("name") or item
+                        if val:
+                            values.append(str(val))
+                elif isinstance(raw, dict):
+                    val = raw.get("value") or raw.get("name")
+                    if val:
+                        values.append(str(val))
+        for key in ("value", "name", "value_text"):
+            if entry.get(key):
+                values.append(str(entry.get(key)))
+    return values
+
+def extract_duration_seconds(incident: Dict[str, Any]) -> int:
+    metrics = incident.get("duration_metrics") or incident.get("metrics") or []
+    for metric in metrics:
+        name = metric.get("name") or metric.get("label") or ""
+        if name.lower() == "client impact duration":
+            val = metric.get("value") or metric.get("value_seconds")
+            try:
+                return int(val)
+            except Exception:
+                continue
+    custom_entries = incident.get("custom_field_entries") or []
+    for entry in custom_entries:
+        name = (entry.get("name") or entry.get("custom_field", {}).get("name") or "").lower()
+        if name == "client impact duration":
+            for key in ("value", "value_seconds", "value_int", "value_number"):
+                if entry.get(key) is not None:
+                    try:
+                        return int(entry.get(key))
+                    except Exception:
+                        continue
+    return None
+
+def normalize_incident_record(incident: Dict[str, Any]) -> List[Dict[str, Any]]:
+    products = extract_catalog_values(incident.get("custom_field_entries") or [], "Product")
+    pillars = extract_catalog_values(incident.get("custom_field_entries") or [], "Solution Pillar")
+    pillar_map = load_product_pillar_key()
+    dt = pick_incident_time(incident)
+    iso_time = dt.isoformat() if dt else None
+    date_only = dt.date().isoformat() if dt else None
+    severity_obj = incident.get("severity")
+    severity = None
+    if isinstance(severity_obj, dict):
+        severity = severity_obj.get("name") or severity_obj.get("label")
+    else:
+        severity = severity_obj
+    inc_type_obj = incident.get("incident_type")
+    if isinstance(inc_type_obj, dict):
+        event_type = inc_type_obj.get("name") or inc_type_obj.get("label") or "Operational Incident"
+    else:
+        event_type = inc_type_obj or "Operational Incident"
+    title = incident.get("name") or incident.get("title") or incident.get("incident_title") or incident.get("reference") or incident.get("id")
+    inc_number = incident.get("reference") or incident.get("id")
+    rca_value = rca_classification_from_custom_fields(incident)
+    duration_seconds = extract_duration_seconds(incident)
+    products = products or ["Unspecified"]
+    direct_pillar = pillars[0] if pillars else None
+    payloads = []
+    for product in products:
+        pillar = pillar_map.get(product, direct_pillar)
+        payloads.append({
+            "inc_number": inc_number,
+            "title": title,
+            "event_type": event_type,
+            "product": product,
+            "pillar": pillar,
+            "severity": severity,
+            "reported_at": iso_time,
+            "date": date_only,
+            "rca_classification": rca_value,
+            "client_impact_duration_seconds": duration_seconds,
+        })
+    return payloads
+
+def upsert_payload(path: Path, payload: Dict[str, Any]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = []
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            data = []
+    idx = next((i for i, item in enumerate(data) if item.get("inc_number") == payload.get("inc_number") and item.get("product") == payload.get("product")), None)
+    if idx is not None:
+        data[idx] = payload
+    else:
+        data.append(payload)
+    path.write_text(json.dumps(data, indent=2))
+
+def sync_incident_feed(api_key: str) -> int:
+    url = "https://api.incident.io/v2/incidents"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    params = {"page_size": 50}
+    processed = 0
+    next_cursor = None
+    while True:
+        if next_cursor:
+            params["after"] = next_cursor
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        body = resp.json()
+        inc_list = body.get("incidents") or []
+        for inc in inc_list:
+            payloads = normalize_incident_record(inc)
+            for payload in payloads:
+                target = INCIDENTS_JSON if (payload.get("event_type") or "").lower() == "operational incident" else OTHERS_JSON
+                upsert_payload(target, payload)
+                processed += 1
+        next_cursor = body.get("pagination", {}).get("next_cursor") or body.get("pagination", {}).get("after")
+        if not next_cursor:
+            break
+    return processed
 
 def quantize_6c(img, dither=True):
     if img.mode != "RGB":
@@ -138,9 +334,43 @@ def process_for_display(src_path, orientation, do_crop, quantize, dither):
     return out_path
 
 def compute_violations_state():
+    def load_incident_payloads(path: Path) -> List[Dict[str, Any]]:
+        if not path.exists():
+            return []
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            return []
+
+    incidents = load_incident_payloads(INCIDENTS_JSON)
+    if incidents:
+        def sort_key(item):
+            dt = parse_timestamp(item.get("reported_at")) or parse_timestamp(item.get("date"))
+            return dt or datetime.min
+        incidents = sorted(incidents, key=sort_key, reverse=True)
+        latest = incidents[0]
+        latest_date_obj = (parse_timestamp(latest.get("reported_at")) or parse_timestamp(latest.get("date")) or datetime.now()).date()
+        incident_num = latest.get("inc_number", "")
+        event_type = latest.get("event_type", "")
+        previous_date = None
+        if len(incidents) > 1:
+            prev_dt = parse_timestamp(incidents[1].get("reported_at")) or parse_timestamp(incidents[1].get("date"))
+            previous_date = prev_dt.date() if prev_dt else None
+        today = date.today()
+        days_since = (today - latest_date_obj).days
+        prior_count = (latest_date_obj - previous_date).days if previous_date else None
+        return {
+            "days_since": days_since,
+            "prior_count": prior_count,
+            "incident": incident_num,
+            "vtype": event_type,
+            "latest_date": latest_date_obj,
+            "previous_date": previous_date,
+            "latest_incident": latest,
+        }
     rows = db_list_violations()
     if not rows:
-        return {"days_since": None, "prior_count": None, "incident": "", "vtype": "", "latest_date": None, "previous_date": None}
+        return {"days_since": None, "prior_count": None, "incident": "", "vtype": "", "latest_date": None, "previous_date": None, "latest_incident": None}
     latest = rows[0]
     latest_date = datetime.strptime(latest[1], "%Y-%m-%d").date()
     incident = latest[2]
@@ -152,7 +382,7 @@ def compute_violations_state():
     days_since = (today - latest_date).days
     prior_count = (latest_date - previous_date).days if previous_date else None
     return {"days_since": days_since, "prior_count": prior_count, "incident": incident, "vtype": vtype,
-            "latest_date": latest_date, "previous_date": previous_date}
+            "latest_date": latest_date, "previous_date": previous_date, "latest_incident": None}
 
 def _load_font(path, size):
     try:
@@ -244,10 +474,31 @@ def _schedule_daily_push():
         sched.add_job(job, "cron", hour=6, minute=0)
         sched.start()
 
+@app.route("/config", methods=["GET", "POST"])
+def config_page():
+    cfg = load_config()
+    current_key = cfg.get("incident_api_key", "")
+    if request.method == "POST":
+        api_key = request.form.get("incident_api_key", "").strip()
+        if api_key:
+            cfg["incident_api_key"] = api_key
+            save_config(cfg)
+            flash("Incident.io API key saved.", "ok")
+        else:
+            cfg.pop("incident_api_key", None)
+            save_config(cfg)
+            flash("API key cleared.", "ok")
+        return redirect(url_for("config_page"))
+    if current_key:
+        masked = ("•" * (len(current_key) - 4)) + current_key[-4:] if len(current_key) > 4 else "•" * len(current_key)
+    else:
+        masked = ""
+    return render_template("config.html", api_key_masked=masked, has_key=bool(current_key))
+
 @app.route("/")
 def index():
     db_init()
-    osha_path = build_and_get_osha_preview()
+    build_and_get_osha_preview()
     images = []
     for p in sorted(UPLOADS.glob("*")):
         if p.suffix.lower() in (".png",".jpg",".jpeg",".bmp",".gif",".webp"):
@@ -257,10 +508,29 @@ def index():
                 "thumb_url": url_for("static", filename=f"thumbs/{thumb.name}"),
                 "src_url": url_for("static", filename=f"uploads/{p.name}"),
             })
+    state = compute_violations_state()
+    incidents_synced = INCIDENTS_JSON.exists()
     return render_template("index.html",
                            images=images,
                            osha_url=url_for("static", filename="osha/current.png") + f"?cb={{int(time.time())}}",
-                           has_bg=BACKGROUND_IMAGE.exists())
+                            has_bg=BACKGROUND_IMAGE.exists(),
+                            latest_incident=state.get("latest_incident"),
+                            api_configured=bool(get_api_key()),
+                            incidents_synced=incidents_synced)
+
+@app.post("/incidents/sync")
+def sync_incidents():
+    api_key = get_api_key()
+    if not api_key:
+        flash("Configure an incident.io API key first.", "error")
+        return redirect(url_for("config_page"))
+    try:
+        count = sync_incident_feed(api_key)
+        build_and_get_osha_preview()
+        flash(f"Synced {count} incident entries from incident.io.", "ok")
+    except Exception as e:
+        flash(f"Sync failed: {e}", "error")
+    return redirect(url_for("index")+"#violations")
 
 @app.post("/upload")
 def upload():

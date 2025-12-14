@@ -55,30 +55,14 @@
   <section id="violations">
     <h2>Violations</h2>
     <div class="grid-2">
-      <form action="{{ url_for('violations_report') }}" method="post" class="card">
-        <div class="row">
-          <label>Date of violation</label>
-          <input type="date" name="vdate" required>
-        </div>
-        <div class="row">
-          <label>Incident number</label>
-          <input type="text" name="incident" placeholder="e.g., 595" required>
-        </div>
-        <div class="row">
-          <label>Type</label>
-          <div class="inline">
-            <label><input type="radio" name="vtype" value="Change" checked> Change</label>
-            <label><input type="radio" name="vtype" value="Deploy"> Deploy</label>
-            <label><input type="radio" name="vtype" value="Missed"> Missed</label>
-          </div>
-        </div>
-        <div class="row">
-          <label><input type="checkbox" name="push_display"> Push to display now</label>
-        </div>
-        <div class="actions">
-          <button type="submit">Save & Update OSHA image</button>
-        </div>
-      </form>
+      <div class="card">
+        <p>Sync incidents directly from incident.io instead of manual reporting.</p>
+        <p>API key status: {% if api_configured %}<strong>configured</strong>{% else %}<strong>missing</strong>{% endif %}. <a href="{{ url_for('config_page') }}">Manage key</a>.</p>
+        <p>{% if incidents_synced %}Local feed present.{% else %}No synced incidents yet.{% endif %}</p>
+        <form action="{{ url_for('sync_incidents') }}" method="post" class="actions">
+          <button type="submit">Sync from incident.io</button>
+        </form>
+      </div>
 
       <div class="card preview">
         <div class="row">
@@ -89,6 +73,25 @@
           <button type="submit">Send to Display</button>
         </form>
       </div>
+    </div>
+
+    <div class="card">
+      <h3>Latest operational incident</h3>
+      {% if latest_incident %}
+        <ul>
+          <li><strong>Incident:</strong> {{ latest_incident.inc_number }}</li>
+          <li><strong>Title:</strong> {{ latest_incident.title }}</li>
+          <li><strong>Date:</strong> {{ latest_incident.date or latest_incident.reported_at }}</li>
+          <li><strong>Event type:</strong> {{ latest_incident.event_type }}</li>
+          <li><strong>Severity:</strong> {{ latest_incident.severity }}</li>
+          <li><strong>Product:</strong> {{ latest_incident.product }}</li>
+          <li><strong>Pillar:</strong> {{ latest_incident.pillar or '—' }}</li>
+          <li><strong>RCA Classification:</strong> {{ latest_incident.rca_classification }}</li>
+          <li><strong>Client impact (s):</strong> {{ latest_incident.client_impact_duration_seconds or '—' }}</li>
+        </ul>
+      {% else %}
+        <p>No operational incidents synced yet. Sync from incident.io to populate the feed.</p>
+      {% endif %}
     </div>
   </section>
 </div>

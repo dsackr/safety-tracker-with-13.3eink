@@ -5,6 +5,7 @@ A Flask web application for managing safety incident reports and preparing image
 ## Features
 - Upload images and generate resized/quantized versions optimized for landscape or portrait orientations.
 - Maintain a history of safety violations and automatically render an OSHA poster showing days since the last incident.
+- Sync violations from incident.io via API (configure your key at `/config`) to keep the OSHA view up to date.
 - Preview generated images from the browser and optionally send them to an external display controller.
 - Optional daily scheduled push to hardware when `apscheduler` is available.
 
@@ -12,6 +13,7 @@ A Flask web application for managing safety incident reports and preparing image
 - Python 3.9+
 - [Flask](https://flask.palletsprojects.com/)
 - [Pillow](https://python-pillow.org/)
+- [Requests](https://requests.readthedocs.io/en/latest/)
 - Optional: [APScheduler](https://apscheduler.readthedocs.io/) (for scheduled pushes)
 
 Install dependencies with pip:
@@ -19,12 +21,13 @@ Install dependencies with pip:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install Flask Pillow APScheduler
+pip install Flask Pillow APScheduler requests
 ```
 
 ## Configuration
 - **`DISPLAY_SCRIPT`** (optional): path to a Python script used to push generated images to your display hardware. When unset, the app simulates the push.
 - **`APP_SECRET`** (optional): secret key for Flask session management. Defaults to `change-me`.
+- **Incident.io API key** (optional): configure through the `/config` page or set `INCIDENT_API_KEY` in the environment to pull violations automatically.
 
 ## Running the App
 1. Ensure the virtual environment is activated and dependencies are installed.
@@ -47,7 +50,7 @@ The application creates these directories automatically if they do not exist:
 ## Usage Tips
 - Upload high-resolution images for best results. Choose between "Crop" (fills the frame) and "Letterbox" (adds padding) processing methods.
 - Toggle quantization and dithering to preview the final appearance on the limited E-Ink palette.
-- Record safety violations with dates, incident numbers, and type (Change/Deploy/Missed). The OSHA poster updates immediately, and you can optionally push it to the hardware.
+- Use the Violations tab to sync the latest incidents from incident.io; the OSHA poster updates immediately and you can optionally push it to the hardware.
 - If APScheduler is installed, the app schedules a daily 06:00 push of the OSHA image when running as the main module.
 
 ## Development
